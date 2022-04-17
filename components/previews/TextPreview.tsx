@@ -1,36 +1,60 @@
-import { FunctionComponent } from 'react'
+import { useRouter } from 'next/router'
+import { useTranslation } from 'next-i18next'
 
 import FourOhFour from '../FourOhFour'
 import Loading from '../Loading'
-import DownloadBtn from '../DownloadBtn'
-import { useStaleSWR } from '../../utils/tools'
+import DownloadButtonGroup from '../DownloadBtnGtoup'
+import useFileContent from '../../utils/fetchOnMount'
+import { DownloadBtnContainer, PreviewContainer } from './Containers'
 
-const TextPreview: FunctionComponent<{ file: any }> = ({ file }) => {
-  const { data, error } = useStaleSWR(file['@microsoft.graph.downloadUrl'])
+const TextPreview = ({ file }) => {
+  const { asPath } = useRouter()
+  const { t } = useTranslation()
+
+  const { response: content, error, validating } = useFileContent(`/api/raw/?path=${asPath}`, asPath)
   if (error) {
     return (
-      <div className="dark:bg-gray-900 p-3 bg-white rounded shadow">
-        <FourOhFour errorMsg={error.message} />
-      </div>
+      <PreviewContainer>
+        <FourOhFour errorMsg={error} />
+      </PreviewContainer>
     )
   }
-  if (!data) {
+
+  if (validating) {
     return (
-      <div className="dark:bg-gray-900 p-3 bg-white rounded shadow">
-        <Loading loadingText="Loading file content..." />
-      </div>
+      <>
+        <PreviewContainer>
+          <Loading loadingText={t('Loading file content...')} />
+        </PreviewContainer>
+        <DownloadBtnContainer>
+          <DownloadButtonGroup />
+        </DownloadBtnContainer>
+      </>
+    )
+  }
+
+  if (!content) {
+    return (
+      <>
+        <PreviewContainer>
+          <FourOhFour errorMsg={t('File is empty.')} />
+        </PreviewContainer>
+        <DownloadBtnContainer>
+          <DownloadButtonGroup />
+        </DownloadBtnContainer>
+      </>
     )
   }
 
   return (
-    <>
-      <div className="dark:bg-gray-900 dark:text-gray-100 p-3 bg-white rounded shadow">
-        <pre className="md:p-3 p-0 overflow-scroll">{data}</pre>
-      </div>
-      <div className="mt-4">
-        <DownloadBtn downloadUrl={file['@microsoft.graph.downloadUrl']} />
-      </div>
-    </>
+    <div>
+      <PreviewContainer>
+        <pre className="overflow-x-scroll p-0 text-sm md:p-3">{content}</pre>
+      </PreviewContainer>
+      <DownloadBtnContainer>
+        <DownloadButtonGroup />
+      </DownloadBtnContainer>
+    </div>
   )
 }
 

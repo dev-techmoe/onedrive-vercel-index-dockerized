@@ -1,49 +1,49 @@
+import type { OdFileObject, OdFolderChildren, OdFolderObject } from '../types'
+import { ParsedUrlQuery } from 'querystring'
+import { FC, MouseEventHandler, SetStateAction, useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import toast, { Toaster } from 'react-hot-toast'
 import emojiRegex from 'emoji-regex'
-import { useClipboard } from 'use-clipboard-copy'
 
-import { ParsedUrlQuery } from 'querystring'
-import { FunctionComponent, useState } from 'react'
-import { ImageDecorator } from 'react-viewer/lib/ViewerProps'
-
-import { useRouter } from 'next/router'
 import dynamic from 'next/dynamic'
+import { useRouter } from 'next/router'
+import { useTranslation } from 'next-i18next'
 
-import { getExtension, getFileIcon, hasKey } from '../utils/getFileIcon'
-import { extensions, preview } from '../utils/getPreviewType'
-import { getBaseUrl, useProtectedSWRInfinite } from '../utils/tools'
+import useLocalStorage from '../utils/useLocalStorage'
+import { getPreviewType, preview } from '../utils/getPreviewType'
+import { useProtectedSWRInfinite } from '../utils/fetchWithSWR'
+import { getExtension, getRawExtension, getFileIcon } from '../utils/getFileIcon'
+import { getStoredToken } from '../utils/protectedRouteHandler'
+import {
+  DownloadingToast,
+  downloadMultipleFiles,
+  downloadTreelikeMultipleFiles,
+  traverseFolder,
+} from './MultiFileDownloader'
 
-import { VideoPreview } from './previews/VideoPreview'
-import { AudioPreview } from './previews/AudioPreview'
-import Loading from './Loading'
+import { layouts } from './SwitchLayout'
+import Loading, { LoadingIcon } from './Loading'
 import FourOhFour from './FourOhFour'
 import Auth from './Auth'
 import TextPreview from './previews/TextPreview'
 import MarkdownPreview from './previews/MarkdownPreview'
 import CodePreview from './previews/CodePreview'
 import OfficePreview from './previews/OfficePreview'
-import DownloadBtn from './DownloadBtn'
+import AudioPreview from './previews/AudioPreview'
+import VideoPreview from './previews/VideoPreview'
+import PDFPreview from './previews/PDFPreview'
+import URLPreview from './previews/URLPreview'
+import ImagePreview from './previews/ImagePreview'
+import DefaultPreview from './previews/DefaultPreview'
+import { PreviewContainer } from './previews/Containers'
 
-// Disabling SSR for some previews (image gallery view, and PDF view)
-const ReactViewer = dynamic(() => import('react-viewer'), { ssr: false })
-const PDFPreview = dynamic(() => import('./previews/PDFPreview'), { ssr: false })
-const EPUBPreview = dynamic(() => import('./previews/EPUBPreview'), { ssr: false })
+import FolderListLayout from './FolderListLayout'
+import FolderGridLayout from './FolderGridLayout'
 
-/**
- * Convert raw bits file/folder size into a human readable string
- *
- * @param size File or folder size, in raw bits
- * @returns Human readable form of the file or folder size
- */
-const humanFileSize = (size: number) => {
-  if (size < 1024) return size + ' B'
-  const i = Math.floor(Math.log(size) / Math.log(1024))
-  const num = size / Math.pow(1024, i)
-  const round = Math.round(num)
-  const formatted = round < 10 ? num.toFixed(2) : round < 100 ? num.toFixed(1) : round
-  return `${formatted} ${'KMGTPEZY'[i - 1]}B`
-}
+// Disabling SSR for some previews
+const EPUBPreview = dynamic(() => import('./previews/EPUBPreview'), {
+  ssr: false,
+})
 
 /**
  * Convert url query into path string
@@ -61,78 +61,128 @@ const queryToPath = (query?: ParsedUrlQuery) => {
   return '/'
 }
 
-const FileListItem: FunctionComponent<{
-  fileContent: { id: string; name: string; size: number; file: Object; lastModifiedDateTime: string }
-}> = ({ fileContent: c }) => {
-  const emojiIcon = emojiRegex().exec(c.name)
-  const renderEmoji = emojiIcon && !emojiIcon.index
-
+// Render the icon of a folder child (may be a file or a folder), use emoji if the name of the child contains emoji
+const renderEmoji = (name: string) => {
+  const emoji = emojiRegex().exec(name)
+  return { render: emoji && !emoji.index, emoji }
+}
+const formatChildName = (name: string) => {
+  const { render, emoji } = renderEmoji(name)
+  return render ? name.replace(emoji ? emoji[0] : '', '').trim() : name
+}
+export const ChildName: FC<{ name: string; folder?: boolean }> = ({ name, folder }) => {
+  const original = formatChildName(name)
+  const extension = folder ? '' : getRawExtension(original)
+  const prename = folder ? original : original.substring(0, original.length - extension.length)
   return (
-    <div className="grid items-center grid-cols-11 p-3 space-x-2 cursor-pointer">
-      <div className="md:col-span-7 flex items-center col-span-11 space-x-2 truncate">
-        {/* <div>{c.file ? c.file.mimeType : 'folder'}</div> */}
-        <div className="flex-shrink-0 w-5 text-center">
-          {renderEmoji ? (
-            <span>{emojiIcon ? emojiIcon[0] : '📁'}</span>
-          ) : (
-            <FontAwesomeIcon icon={c.file ? getFileIcon(c.name) : ['far', 'folder']} />
-          )}
-        </div>
-        <div className="truncate">
-          {renderEmoji ? c.name.replace(emojiIcon ? emojiIcon[0] : '', '').trim() : c.name}
-        </div>
-      </div>
-      <div className="md:block dark:text-gray-500 flex-shrink-0 hidden col-span-3 font-mono text-sm text-gray-700">
-        {new Date(c.lastModifiedDateTime).toLocaleString('en-US', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        })}
-      </div>
-      <div className="md:block dark:text-gray-500 flex-shrink-0 hidden col-span-1 font-mono text-sm text-gray-700 truncate">
-        {humanFileSize(c.size)}
-      </div>
-    </div>
+    <span className="truncate before:float-right before:content-[attr(data-tail)]" data-tail={extension}>
+      {prename}
+    </span>
+  )
+}
+export const ChildIcon: FC<{ child: OdFolderChildren }> = ({ child }) => {
+  const { render, emoji } = renderEmoji(child.name)
+  return render ? (
+    <span>{emoji ? emoji[0] : '📁'}</span>
+  ) : (
+    <FontAwesomeIcon icon={child.file ? getFileIcon(child.name, { video: Boolean(child.video) }) : ['far', 'folder']} />
   )
 }
 
-const FileListing: FunctionComponent<{ query?: ParsedUrlQuery }> = ({ query }) => {
-  const [imageViewerVisible, setImageViewerVisibility] = useState(false)
-  const [activeImageIdx, setActiveImageIdx] = useState(0)
+export const Checkbox: FC<{
+  checked: 0 | 1 | 2
+  onChange: () => void
+  title: string
+  indeterminate?: boolean
+}> = ({ checked, onChange, title, indeterminate }) => {
+  const ref = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.checked = Boolean(checked)
+      if (indeterminate) {
+        ref.current.indeterminate = checked == 1
+      }
+    }
+  }, [ref, checked, indeterminate])
+
+  const handleClick: MouseEventHandler = e => {
+    if (ref.current) {
+      if (e.target === ref.current) {
+        e.stopPropagation()
+      } else {
+        ref.current.click()
+      }
+    }
+  }
+
+  return (
+    <span
+      title={title}
+      className="inline-flex cursor-pointer items-center rounded p-1.5 hover:bg-gray-300 dark:hover:bg-gray-600"
+      onClick={handleClick}
+    >
+      <input
+        className="form-check-input cursor-pointer"
+        type="checkbox"
+        value={checked ? '1' : ''}
+        ref={ref}
+        aria-label={title}
+        onChange={onChange}
+      />
+    </span>
+  )
+}
+
+export const Downloading: FC<{ title: string; style: string }> = ({ title, style }) => {
+  return (
+    <span title={title} className={`${style} rounded`} role="status">
+      <LoadingIcon
+        // Use fontawesome far theme via class `svg-inline--fa` to get style `vertical-align` only
+        // for consistent icon alignment, as class `align-*` cannot satisfy it
+        className="svg-inline--fa inline-block h-4 w-4 animate-spin"
+      />
+    </span>
+  )
+}
+
+const FileListing: FC<{ query?: ParsedUrlQuery }> = ({ query }) => {
+  const [selected, setSelected] = useState<{ [key: string]: boolean }>({})
+  const [totalSelected, setTotalSelected] = useState<0 | 1 | 2>(0)
+  const [totalGenerating, setTotalGenerating] = useState<boolean>(false)
+  const [folderGenerating, setFolderGenerating] = useState<{
+    [key: string]: boolean
+  }>({})
 
   const router = useRouter()
-  const clipboard = useClipboard()
+  const hashedToken = getStoredToken(router.asPath)
+  const [layout, _] = useLocalStorage('preferredLayout', layouts[0])
+
+  const { t } = useTranslation()
 
   const path = queryToPath(query)
 
   const { data, error, size, setSize } = useProtectedSWRInfinite(path)
 
   if (error) {
+    // If error includes 403 which means the user has not completed initial setup, redirect to OAuth page
+    if (error.status === 403) {
+      router.push('/onedrive-vercel-index-oauth/step-1')
+      return <div />
+    }
+
     return (
-      <div className="dark:bg-gray-900 p-3 bg-white rounded shadow">
-        {error.message.includes('401') ? <Auth redirect={path} /> : <FourOhFour errorMsg={error.message} />}
-      </div>
+      <PreviewContainer>
+        {error.status === 401 ? <Auth redirect={path} /> : <FourOhFour errorMsg={JSON.stringify(error.message)} />}
+      </PreviewContainer>
     )
   }
   if (!data) {
     return (
-      <div className="dark:bg-gray-900 p-3 bg-white rounded shadow">
-        <Loading loadingText="Loading ..." />
-      </div>
+      <PreviewContainer>
+        <Loading loadingText={t('Loading ...')} />
+      </PreviewContainer>
     )
-  }
-
-  const fileIsImage = (fileName: string) => {
-    const fileExtension = getExtension(fileName)
-    if (hasKey(extensions, fileExtension)) {
-      if (extensions[fileExtension] === preview.image) {
-        return true
-      }
-    }
-    return false
   }
 
   const responses: any[] = data ? [].concat(...data) : []
@@ -144,151 +194,158 @@ const FileListing: FunctionComponent<{ query?: ParsedUrlQuery }> = ({ query }) =
   const onlyOnePage = data && typeof data[0].next === 'undefined'
 
   if ('folder' in responses[0]) {
-    // Image preview rendering preparations
-    const imagesInFolder: ImageDecorator[] = []
-    const imageIndexDict: { [key: string]: number } = {}
-    let imageIndex = 0
-
-    // README rendering preparations
-    let renderReadme = false
-    let readmeFile = null
-
     // Expand list of API returns into flattened file data
-    const children = [].concat(...responses.map(r => r.folder.value))
+    const folderChildren = [].concat(...responses.map(r => r.folder.value)) as OdFolderObject['value']
 
-    children.forEach((c: any) => {
-      if (fileIsImage(c.name)) {
-        imagesInFolder.push({
-          src: c['@microsoft.graph.downloadUrl'],
-          alt: c.name,
-          downloadUrl: c['@microsoft.graph.downloadUrl'],
+    // Find README.md file to render
+    const readmeFile = folderChildren.find(c => c.name.toLowerCase() === 'readme.md')
+
+    // Filtered file list helper
+    const getFiles = () => folderChildren.filter(c => !c.folder && c.name !== '.password')
+
+    // File selection
+    const genTotalSelected = (selected: { [key: string]: boolean }) => {
+      const selectInfo = getFiles().map(c => Boolean(selected[c.id]))
+      const [hasT, hasF] = [selectInfo.some(i => i), selectInfo.some(i => !i)]
+      return hasT && hasF ? 1 : !hasF ? 2 : 0
+    }
+
+    const toggleItemSelected = (id: string) => {
+      let val: SetStateAction<{ [key: string]: boolean }>
+      if (selected[id]) {
+        val = { ...selected }
+        delete val[id]
+      } else {
+        val = { ...selected, [id]: true }
+      }
+      setSelected(val)
+      setTotalSelected(genTotalSelected(val))
+    }
+
+    const toggleTotalSelected = () => {
+      if (genTotalSelected(selected) == 2) {
+        setSelected({})
+        setTotalSelected(0)
+      } else {
+        setSelected(Object.fromEntries(getFiles().map(c => [c.id, true])))
+        setTotalSelected(2)
+      }
+    }
+
+    // Selected file download
+    const handleSelectedDownload = () => {
+      const folderName = path.substring(path.lastIndexOf('/') + 1)
+      const folder = folderName ? decodeURIComponent(folderName) : undefined
+      const files = getFiles()
+        .filter(c => selected[c.id])
+        .map(c => ({
+          name: c.name,
+          url: `/api/raw/?path=${path}/${c.name}${hashedToken ? `&odpt=${hashedToken}` : ''}`,
+        }))
+
+      if (files.length == 1) {
+        const el = document.createElement('a')
+        el.style.display = 'none'
+        document.body.appendChild(el)
+        el.href = files[0].url
+        el.click()
+        el.remove()
+      } else if (files.length > 1) {
+        setTotalGenerating(true)
+
+        const toastId = toast.loading(<DownloadingToast router={router} />)
+        downloadMultipleFiles({ toastId, router, files, folder })
+          .then(() => {
+            setTotalGenerating(false)
+            toast.success(t('Finished downloading selected files.'), {
+              id: toastId,
+            })
+          })
+          .catch(() => {
+            setTotalGenerating(false)
+            toast.error(t('Failed to download selected files.'), { id: toastId })
+          })
+      }
+    }
+
+    // Folder recursive download
+    const handleFolderDownload = (path: string, id: string, name?: string) => () => {
+      const files = (async function* () {
+        for await (const { meta: c, path: p, isFolder, error } of traverseFolder(path)) {
+          if (error) {
+            toast.error(
+              t('Failed to download folder {{path}}: {{status}} {{message}} Skipped it to continue.', {
+                path: p,
+                status: error.status,
+                message: error.message,
+              })
+            )
+            continue
+          }
+          const hashedTokenForPath = getStoredToken(p)
+          yield {
+            name: c?.name,
+            url: `/api/raw/?path=${p}${hashedTokenForPath ? `&odpt=${hashedTokenForPath}` : ''}`,
+            path: p,
+            isFolder,
+          }
+        }
+      })()
+
+      setFolderGenerating({ ...folderGenerating, [id]: true })
+      const toastId = toast.loading(<DownloadingToast router={router} />)
+
+      downloadTreelikeMultipleFiles({
+        toastId,
+        router,
+        files,
+        basePath: path,
+        folder: name,
+      })
+        .then(() => {
+          setFolderGenerating({ ...folderGenerating, [id]: false })
+          toast.success(t('Finished downloading folder.'), { id: toastId })
         })
-        imageIndexDict[c.id] = imageIndex
-        imageIndex += 1
-      }
+        .catch(() => {
+          setFolderGenerating({ ...folderGenerating, [id]: false })
+          toast.error(t('Failed to download folder.'), { id: toastId })
+        })
+    }
 
-      if (c.name.toLowerCase() === 'readme.md') {
-        renderReadme = true
-        readmeFile = c
-      }
-    })
+    // Folder layout component props
+    const folderProps = {
+      toast,
+      path,
+      folderChildren,
+      selected,
+      toggleItemSelected,
+      totalSelected,
+      toggleTotalSelected,
+      totalGenerating,
+      handleSelectedDownload,
+      folderGenerating,
+      handleFolderDownload,
+    }
 
     return (
-      <div className="dark:bg-gray-900 dark:text-gray-100 bg-white rounded shadow">
-        <div className="dark:border-gray-700 grid items-center grid-cols-12 p-3 space-x-2 border-b border-gray-200">
-          <div className="md:col-span-7 col-span-12 font-bold">Name</div>
-          <div className="md:block hidden col-span-3 font-bold">Last Modified</div>
-          <div className="md:block hidden font-bold">Size</div>
-          <div className="md:block hidden font-bold">Actions</div>
-        </div>
+      <>
+        <Toaster />
 
-        <Toaster
-          toastOptions={{
-            style: {
-              background: '#316C23',
-              color: '#ffffff',
-            },
-          }}
-        />
-
-        {imagesInFolder.length !== 0 && (
-          <ReactViewer
-            zIndex={99}
-            visible={imageViewerVisible}
-            activeIndex={activeImageIdx}
-            images={imagesInFolder}
-            drag={false}
-            rotatable={false}
-            noClose={true}
-            scalable={false}
-            zoomSpeed={0.2}
-            downloadable={true}
-            downloadInNewWindow={true}
-            onMaskClick={() => {
-              setImageViewerVisibility(false)
-            }}
-            customToolbar={toolbars => {
-              toolbars[0].render = <FontAwesomeIcon icon="plus" />
-              toolbars[1].render = <FontAwesomeIcon icon="minus" />
-              toolbars[2].render = <FontAwesomeIcon icon="arrow-left" />
-              toolbars[3].render = <FontAwesomeIcon icon="undo" />
-              toolbars[4].render = <FontAwesomeIcon icon="arrow-right" />
-              toolbars[9].render = <FontAwesomeIcon icon="download" />
-              return toolbars.concat([
-                {
-                  key: 'copy',
-                  render: <FontAwesomeIcon icon={['fas', 'copy']} />,
-                  onClick: i => {
-                    clipboard.copy(i.alt ? `${getBaseUrl()}/api?path=${path + '/' + i.alt}&raw=true` : '')
-                    toast.success('Copied image permanent link to clipboard.')
-                  },
-                },
-              ])
-            }}
-          />
-        )}
-
-        {children.map((c: any) => (
-          <div className="hover:bg-gray-100 dark:hover:bg-gray-850 grid grid-cols-12" key={c.id}>
-            <div
-              className="col-span-11"
-              onClick={e => {
-                e.preventDefault()
-
-                if (!c.folder && fileIsImage(c.name)) {
-                  setActiveImageIdx(imageIndexDict[c.id])
-                  setImageViewerVisibility(true)
-                } else {
-                  router.push(`${path === '/' ? '' : path}/${encodeURIComponent(c.name)}`)
-                }
-              }}
-            >
-              <FileListItem fileContent={c} />
-            </div>
-            {c.folder ? (
-              <div className="md:flex dark:text-gray-400 hidden p-1 text-gray-700">
-                <span
-                  title="Copy folder permalink"
-                  className="hover:bg-gray-300 dark:hover:bg-gray-600 p-2 rounded cursor-pointer"
-                  onClick={() => {
-                    clipboard.copy(`${getBaseUrl()}${path === '/' ? '' : path}/${encodeURIComponent(c.name)}`)
-                    toast.success('Copied folder permalink.')
-                  }}
-                >
-                  <FontAwesomeIcon icon={['far', 'copy']} />
-                </span>
-              </div>
-            ) : (
-              <div className="md:flex dark:text-gray-400 hidden p-1 text-gray-700">
-                <span
-                  title="Copy raw file permalink"
-                  className="hover:bg-gray-300 dark:hover:bg-gray-600 p-2 rounded cursor-pointer"
-                  onClick={() => {
-                    clipboard.copy(`${getBaseUrl()}/api?path=${path === '/' ? '' : path}/${c.name}&raw=true`)
-                    toast.success('Copied raw file permalink.')
-                  }}
-                >
-                  <FontAwesomeIcon icon={['far', 'copy']} />
-                </span>
-                <a
-                  title="Download file"
-                  className="hover:bg-gray-300 dark:hover:bg-gray-600 p-2 rounded cursor-pointer"
-                  href={c['@microsoft.graph.downloadUrl']}
-                >
-                  <FontAwesomeIcon icon={['far', 'arrow-alt-circle-down']} />
-                </a>
-              </div>
-            )}
-          </div>
-        ))}
+        {layout.name === 'Grid' ? <FolderGridLayout {...folderProps} /> : <FolderListLayout {...folderProps} />}
 
         {!onlyOnePage && (
-          <div>
-            <div className="dark:border-gray-700 p-3 font-mono text-sm text-center text-gray-400 border-b border-gray-200">
-              - showing {size} page{size > 1 ? 's' : ''} of {isLoadingMore ? '...' : children.length} files -
+          <div className="rounded-b bg-white dark:bg-gray-900 dark:text-gray-100">
+            <div className="border-b border-gray-200 p-3 text-center font-mono text-sm text-gray-400 dark:border-gray-700">
+              {t('- showing {{count}} page(s) ', {
+                count: size,
+                totalFileNum: isLoadingMore ? '...' : folderChildren.length,
+              }) +
+                (isLoadingMore
+                  ? t('of {{count}} file(s) -', { count: folderChildren.length, context: 'loading' })
+                  : t('of {{count}} file(s) -', { count: folderChildren.length, context: 'loaded' }))}
             </div>
             <button
-              className={`flex items-center justify-center w-full p-3 space-x-2 ${
+              className={`flex w-full items-center justify-center space-x-2 p-3 disabled:cursor-not-allowed ${
                 isLoadingMore || isReachingEnd ? 'opacity-60' : 'hover:bg-gray-100 dark:hover:bg-gray-850'
               }`}
               onClick={() => setSize(size + 1)}
@@ -296,33 +353,14 @@ const FileListing: FunctionComponent<{ query?: ParsedUrlQuery }> = ({ query }) =
             >
               {isLoadingMore ? (
                 <>
-                  <span>Loading ...</span>{' '}
-                  <svg
-                    className="animate-spin w-5 h-5 mr-3 -ml-1"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
+                  <LoadingIcon className="inline-block h-4 w-4 animate-spin" />
+                  <span>{t('Loading ...')}</span>{' '}
                 </>
               ) : isReachingEnd ? (
-                <span>No more files</span>
+                <span>{t('No more files')}</span>
               ) : (
                 <>
-                  <span>Load more</span>
+                  <span>{t('Load more')}</span>
                   <FontAwesomeIcon icon="chevron-circle-down" />
                 </>
               )}
@@ -330,30 +368,23 @@ const FileListing: FunctionComponent<{ query?: ParsedUrlQuery }> = ({ query }) =
           </div>
         )}
 
-        {renderReadme && (
-          <div className="dark:border-gray-700 border-t">
-            <MarkdownPreview file={readmeFile} path={path} standalone={false} />
+        {readmeFile && (
+          <div className="mt-4">
+            <MarkdownPreview file={readmeFile} path={path} standalone={false} proxy={true} />
           </div>
         )}
-      </div>
+      </>
     )
   }
 
   if ('file' in responses[0] && responses.length === 1) {
-    const { file } = responses[0]
-    const downloadUrl = file['@microsoft.graph.downloadUrl']
-    const fileName = file.name
-    const fileExtension = fileName.slice(((fileName.lastIndexOf('.') - 1) >>> 0) + 2).toLowerCase()
+    const file = responses[0].file as OdFileObject
+    const previewType = getPreviewType(getExtension(file.name), { video: Boolean(file.video) })
 
-    if (hasKey(extensions, fileExtension)) {
-      switch (extensions[fileExtension]) {
+    if (previewType) {
+      switch (previewType) {
         case preview.image:
-          return (
-            <div className="w-full p-3 bg-white rounded shadow">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img className="mx-auto" src={downloadUrl} alt={fileName} />
-            </div>
-          )
+          return <ImagePreview file={file} />
 
         case preview.text:
           return <TextPreview file={file} />
@@ -379,29 +410,21 @@ const FileListing: FunctionComponent<{ query?: ParsedUrlQuery }> = ({ query }) =
         case preview.epub:
           return <EPUBPreview file={file} />
 
-        default:
-          return <div className="dark:bg-gray-900 bg-white rounded shadow">{fileName}</div>
-      }
-    }
+        case preview.url:
+          return <URLPreview file={file} />
 
-    return (
-      <>
-        <div className="dark:bg-gray-900 p-3 bg-white rounded shadow">
-          <FourOhFour
-            errorMsg={`Preview for file ${fileName} is not available, download directly with the button below.`}
-          />
-        </div>
-        <div className="mt-4">
-          <DownloadBtn downloadUrl={downloadUrl} />
-        </div>
-      </>
-    )
+        default:
+          return <DefaultPreview file={file} />
+      }
+    } else {
+      return <DefaultPreview file={file} />
+    }
   }
 
   return (
-    <div className="dark:bg-gray-900 p-3 bg-white rounded shadow">
-      <FourOhFour errorMsg={`Cannot preview ${path}`} />
-    </div>
+    <PreviewContainer>
+      <FourOhFour errorMsg={t('Cannot preview {{path}}', { path })} />
+    </PreviewContainer>
   )
 }
 export default FileListing

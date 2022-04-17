@@ -1,11 +1,19 @@
-import { FunctionComponent, useEffect, useRef, useState } from 'react'
+import type { OdFileObject } from '../../types'
+
+import { FC, useEffect, useRef, useState } from 'react'
 import { ReactReader } from 'react-reader'
-import type { Rendition } from 'epubjs'
+import { useRouter } from 'next/router'
+import { useTranslation } from 'next-i18next'
 
 import Loading from '../Loading'
-import DownloadBtn from '../DownloadBtn'
+import DownloadButtonGroup from '../DownloadBtnGtoup'
+import { DownloadBtnContainer } from './Containers'
+import { getStoredToken } from '../../utils/protectedRouteHandler'
 
-const EPUBPreview: FunctionComponent<{file: any}> = ({ file }) => {
+const EPUBPreview: FC<{ file: OdFileObject }> = ({ file }) => {
+  const { asPath } = useRouter()
+  const hashedToken = getStoredToken(asPath)
+
   const [epubContainerWidth, setEpubContainerWidth] = useState(400)
   const epubContainer = useRef<HTMLDivElement>(null)
 
@@ -16,11 +24,13 @@ const EPUBPreview: FunctionComponent<{file: any}> = ({ file }) => {
   const [location, setLocation] = useState<string>()
   const onLocationChange = (cfiStr: string) => setLocation(cfiStr)
 
+  const { t } = useTranslation()
+
   // Fix for not valid epub files according to
   // https://github.com/gerhardsletten/react-reader/issues/33#issuecomment-673964947
-  const fixEpub = (rendition: Rendition) => {
+  const fixEpub = rendition => {
     const spineGet = rendition.book.spine.get.bind(rendition.book.spine)
-    rendition.book.spine.get = function (target) {
+    rendition.book.spine.get = function (target: string) {
       const targetStr = target as string
       let t = spineGet(target)
       while (t == null && targetStr.startsWith('../')) {
@@ -32,17 +42,23 @@ const EPUBPreview: FunctionComponent<{file: any}> = ({ file }) => {
   }
 
   return (
-    <>
+    <div>
       <div
-        className="dark:bg-gray-900 md:p-3 no-scrollbar flex flex-col w-full overflow-scroll bg-white rounded shadow"
+        className="no-scrollbar flex w-full flex-col overflow-scroll rounded bg-white dark:bg-gray-900 md:p-3"
         style={{ maxHeight: '90vh' }}
       >
-        <div className="no-scrollbar flex-1 w-full overflow-scroll" ref={epubContainer} style={{ minHeight: '70vh' }}>
-          <div style={{ position: 'absolute', width: epubContainerWidth, height: '70vh' }}>
+        <div className="no-scrollbar w-full flex-1 overflow-scroll" ref={epubContainer} style={{ minHeight: '70vh' }}>
+          <div
+            style={{
+              position: 'absolute',
+              width: epubContainerWidth,
+              height: '70vh',
+            }}
+          >
             <ReactReader
-              url={file['@microsoft.graph.downloadUrl']}
-              getRendition={(rendition) => fixEpub(rendition)}
-              loadingView={<Loading loadingText="Loading EPUB ..." />}
+              url={`/api/raw/?path=${asPath}${hashedToken ? '&token=' + hashedToken : ''}`}
+              getRendition={rendition => fixEpub(rendition)}
+              loadingView={<Loading loadingText={t('Loading EPUB ...')} />}
               location={location}
               locationChanged={onLocationChange}
               epubInitOptions={{ openAs: 'epub' }}
@@ -51,10 +67,10 @@ const EPUBPreview: FunctionComponent<{file: any}> = ({ file }) => {
           </div>
         </div>
       </div>
-      <div className="mt-4">
-        <DownloadBtn downloadUrl={file['@microsoft.graph.downloadUrl']} />
-      </div>
-    </>
+      <DownloadBtnContainer>
+        <DownloadButtonGroup />
+      </DownloadBtnContainer>
+    </div>
   )
 }
 

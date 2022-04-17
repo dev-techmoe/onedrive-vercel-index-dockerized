@@ -1,46 +1,58 @@
-import { useEffect, FunctionComponent } from 'react'
-import Prism from 'prismjs'
+import { FC } from 'react'
+import { useTranslation } from 'next-i18next'
+import useSystemTheme from 'react-use-system-theme'
+import { useRouter } from 'next/router'
 
-import { getExtension } from '../../utils/getFileIcon'
-import { useStaleSWR } from '../../utils/tools'
+import { LightAsync as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { tomorrowNightEighties, tomorrow } from 'react-syntax-highlighter/dist/cjs/styles/hljs'
+
+import useFileContent from '../../utils/fetchOnMount'
+import { getLanguageByFileName } from '../../utils/getPreviewType'
 import FourOhFour from '../FourOhFour'
 import Loading from '../Loading'
-import DownloadBtn from '../DownloadBtn'
+import DownloadButtonGroup from '../DownloadBtnGtoup'
+import { DownloadBtnContainer, PreviewContainer } from './Containers'
 
-const CodePreview: FunctionComponent<{ file: any }> = ({ file }) => {
-  const { data, error } = useStaleSWR(file['@microsoft.graph.downloadUrl'])
+const CodePreview: FC<{ file: any }> = ({ file }) => {
+  const { asPath } = useRouter()
+  const { response: content, error, validating } = useFileContent(`/api/raw/?path=${asPath}`, asPath)
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      Prism.highlightAll()
-    }
-  }, [data])
+  const theme = useSystemTheme('dark')
+  const { t } = useTranslation()
 
   if (error) {
     return (
-      <div className="dark:bg-gray-900 p-3 bg-white rounded shadow">
-        <FourOhFour errorMsg={error.message} />
-      </div>
+      <PreviewContainer>
+        <FourOhFour errorMsg={error} />
+      </PreviewContainer>
     )
   }
-  if (!data) {
+  if (validating) {
     return (
-      <div className="dark:bg-gray-900 p-3 bg-white rounded shadow">
-        <Loading loadingText="Loading file content..." />
-      </div>
+      <>
+        <PreviewContainer>
+          <Loading loadingText={t('Loading file content...')} />
+        </PreviewContainer>
+        <DownloadBtnContainer>
+          <DownloadButtonGroup />
+        </DownloadBtnContainer>
+      </>
     )
   }
 
   return (
     <>
-      <div className="markdown-body p-3 bg-gray-900 rounded shadow">
-        <pre className={`language-${getExtension(file.name)}`}>
-          <code>{data}</code>
-        </pre>
-      </div>
-      <div className="mt-4">
-        <DownloadBtn downloadUrl={file['@microsoft.graph.downloadUrl']} />
-      </div>
+      <PreviewContainer>
+        <SyntaxHighlighter
+          language={getLanguageByFileName(file.name)}
+          style={theme === 'dark' ? tomorrowNightEighties : tomorrow}
+        >
+          {content}
+        </SyntaxHighlighter>
+      </PreviewContainer>
+      <DownloadBtnContainer>
+        <DownloadButtonGroup />
+      </DownloadBtnContainer>
     </>
   )
 }

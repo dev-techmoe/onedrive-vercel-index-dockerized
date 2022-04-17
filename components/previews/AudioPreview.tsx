@@ -1,8 +1,16 @@
-import { FunctionComponent, useState } from 'react'
-import ReactPlayer from 'react-player'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import type { OdFileObject } from '../../types'
+import { FC, useEffect, useRef, useState } from 'react'
 
-import DownloadBtn from '../DownloadBtn'
+import ReactAudioPlayer from 'react-audio-player'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { useTranslation } from 'next-i18next'
+import { useRouter } from 'next/router'
+
+import DownloadButtonGroup from '../DownloadBtnGtoup'
+import { DownloadBtnContainer, PreviewContainer } from './Containers'
+import { LoadingIcon } from '../Loading'
+import { formatModifiedDateTime } from '../../utils/fileDetails'
+import { getStoredToken } from '../../utils/protectedRouteHandler'
 
 enum PlayerState {
   Loading,
@@ -11,71 +19,95 @@ enum PlayerState {
   Paused,
 }
 
-export const AudioPreview: FunctionComponent<{ file: any }> = ({ file }) => {
+const AudioPreview: FC<{ file: OdFileObject }> = ({ file }) => {
+  const { t } = useTranslation()
+  const { asPath } = useRouter()
+  const hashedToken = getStoredToken(asPath)
+
+  const rapRef = useRef<ReactAudioPlayer>(null)
   const [playerStatus, setPlayerStatus] = useState(PlayerState.Loading)
+
+  // Render audio thumbnail, and also check for broken thumbnails
+  const thumbnail = `/api/thumbnail/?path=${asPath}&size=medium${hashedToken ? `&odpt=${hashedToken}` : ''}`
+  const [brokenThumbnail, setBrokenThumbnail] = useState(false)
+
+  useEffect(() => {
+    // Manually get the HTML audio element and set onplaying event.
+    // - As the default event callbacks provided by the React component does not guarantee playing state to be set
+    // - properly when the user seeks through the timeline or the audio is buffered.
+    const rap = (rapRef.current as ReactAudioPlayer).audioEl.current
+    if (rap) {
+      rap.oncanplay = () => setPlayerStatus(PlayerState.Ready)
+      rap.onended = () => setPlayerStatus(PlayerState.Paused)
+      rap.onpause = () => setPlayerStatus(PlayerState.Paused)
+      rap.onplay = () => setPlayerStatus(PlayerState.Playing)
+      rap.onplaying = () => setPlayerStatus(PlayerState.Playing)
+      rap.onseeking = () => setPlayerStatus(PlayerState.Loading)
+      rap.onwaiting = () => setPlayerStatus(PlayerState.Loading)
+      rap.onerror = () => setPlayerStatus(PlayerState.Paused)
+    }
+  }, [])
 
   return (
     <>
-      <div className="dark:bg-gray-900 dark:text-white w-full p-3 bg-white rounded shadow">
-        <div className="md:flex-row md:space-x-4 flex flex-col space-y-4">
-          <div className="dark:bg-gray-700 h-72 md:w-40 md:h-36 flex items-center justify-center w-full transition-all duration-75 bg-gray-100 rounded">
-            {playerStatus === PlayerState.Loading ? (
-              <div>
-                <svg
-                  className="animate-spin w-5 h-5"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
+      <PreviewContainer>
+        <div className="flex flex-col space-y-4 md:flex-row md:space-x-4">
+          <div className="relative flex aspect-square w-full items-center justify-center rounded bg-gray-100 transition-all duration-75 dark:bg-gray-700 md:w-48">
+            <div
+              className={`absolute z-20 flex h-full w-full items-center justify-center transition-all duration-300 ${
+                playerStatus === PlayerState.Loading
+                  ? 'bg-white opacity-80 dark:bg-gray-800'
+                  : 'bg-transparent opacity-0'
+              }`}
+            >
+              <LoadingIcon className="z-10 inline-block h-5 w-5 animate-spin" />
+            </div>
+
+            {!brokenThumbnail ? (
+              <div className="absolute m-4 rounded-full shadow-lg">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  className={`h-full w-full rounded-full object-cover object-top ${
+                    playerStatus === PlayerState.Playing ? 'animate-spin-slow' : ''
+                  }`}
+                  src={thumbnail}
+                  alt={file.name}
+                  onError={() => setBrokenThumbnail(true)}
+                />
               </div>
             ) : (
               <FontAwesomeIcon
-                className={`h-5 w-5 ${playerStatus === PlayerState.Playing ? 'animate-spin' : ''}`}
+                className={`z-10 h-5 w-5 ${playerStatus === PlayerState.Playing ? 'animate-spin' : ''}`}
                 icon="music"
                 size="2x"
               />
             )}
           </div>
-          <div className="flex flex-col w-full space-y-2">
-            <div>{file.name}</div>
-            <div className="pb-4 text-sm text-gray-500">
-              Last modified:{' '}
-              {new Date(file.lastModifiedDateTime).toLocaleString(undefined, {
-                dateStyle: 'short',
-                timeStyle: 'short',
-              })}
+
+          <div className="flex w-full flex-col justify-between">
+            <div>
+              <div className="mb-2 font-medium">{file.name}</div>
+              <div className="mb-4 text-sm text-gray-500">
+                {t('Last modified:') + ' ' + formatModifiedDateTime(file.lastModifiedDateTime)}
+              </div>
             </div>
-            <ReactPlayer
-              url={file['@microsoft.graph.downloadUrl']}
+
+            <ReactAudioPlayer
+              className="h-11 w-full"
+              src={`/api/raw/?path=${asPath}${hashedToken ? `&odpt=${hashedToken}` : ''}`}
+              ref={rapRef}
               controls
-              width="100%"
-              height="48px"
-              config={{ file: { forceAudio: true } }}
-              onReady={() => {
-                setPlayerStatus(PlayerState.Ready)
-              }}
-              onPlay={() => {
-                setPlayerStatus(PlayerState.Playing)
-              }}
-              onPause={() => {
-                setPlayerStatus(PlayerState.Paused)
-              }}
-              onError={() => setPlayerStatus(PlayerState.Paused)}
-              onEnded={() => setPlayerStatus(PlayerState.Paused)}
+              preload="auto"
             />
           </div>
         </div>
-      </div>
-      <div className="mt-4">
-        <DownloadBtn downloadUrl={file['@microsoft.graph.downloadUrl']} />
-      </div>
+      </PreviewContainer>
+
+      <DownloadBtnContainer>
+        <DownloadButtonGroup />
+      </DownloadBtnContainer>
     </>
   )
 }
+
+export default AudioPreview

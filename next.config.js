@@ -1,24 +1,8 @@
-module.exports = {
-  webpack: (config) => {
-    // load worker files as a urls with `file-loader`
-    config.module.rules.unshift({
-      test: /pdf\.worker\.(min\.)?js/,
-      use: [
-        {
-          loader: "file-loader",
-          options: {
-            name: "[contenthash].[ext]",
-            publicPath: "_next/static/worker",
-            outputPath: "static/worker"
-          }
-        }
-      ]
-    });
+const { i18n } = require('./next-i18next.config')
 
-    return config;
-  },
+module.exports = {
+  i18n,
   reactStrictMode: true,
-  images: {
-    domains: ['public.dm.files.1drv.com'],
-  },
+  // Required by Next i18n with API routes, otherwise API routes 404 when fetching without trailing slash
+  trailingSlash: true
 }

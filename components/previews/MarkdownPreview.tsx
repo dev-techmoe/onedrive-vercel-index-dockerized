@@ -1,31 +1,42 @@
-import { useEffect, FunctionComponent, CSSProperties } from 'react'
-import Prism from 'prismjs'
+import { FC, CSSProperties, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import gfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
+import { useTranslation } from 'next-i18next'
+import { LightAsync as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { tomorrowNight } from 'react-syntax-highlighter/dist/cjs/styles/hljs'
 
 import 'katex/dist/katex.min.css'
 
+import useFileContent from '../../utils/fetchOnMount'
 import FourOhFour from '../FourOhFour'
 import Loading from '../Loading'
-import DownloadBtn from '../DownloadBtn'
-import { useStaleSWR } from '../../utils/tools'
+import DownloadButtonGroup from '../DownloadBtnGtoup'
+import { DownloadBtnContainer, PreviewContainer } from './Containers'
 
-const MarkdownPreview: FunctionComponent<{ file: any; path: string; standalone?: boolean }> = ({
-  file,
-  path,
-  standalone = true,
-}) => {
-  const { data, error } = useStaleSWR(file['@microsoft.graph.downloadUrl'])
-
+const MarkdownPreview: FC<{
+  file: any
+  path: string
+  standalone?: boolean
+  proxy?: boolean
+}> = ({ file, path, standalone = true, proxy = false }) => {
   // The parent folder of the markdown file, which is also the relative image folder
-  const parentPath = path.substring(0, path.lastIndexOf('/'))
+  const parentPath = standalone ? path.substring(0, path.lastIndexOf('/')) : path
+
+  const {
+    response: content,
+    error,
+    validating,
+  } = useFileContent(`/api/raw/?path=${parentPath}/${file.name}${proxy ? `&proxy=true` : ''}`, path)
+  const { t } = useTranslation()
+
   // Check if the image is relative path instead of a absolute url
   const isUrlAbsolute = (url: string | string[]) => url.indexOf('://') > 0 || url.indexOf('//') === 0
-  // Custom renderer to render images with relative path
-  const relativeImagePathRenderer = {
+  // Custom renderer:
+  const customRenderer = {
+    // img: to render images in markdown with relative file paths
     img: ({
       alt,
       src,
@@ -41,17 +52,11 @@ const MarkdownPreview: FunctionComponent<{ file: any; path: string; standalone?:
       height?: string | number
       style?: CSSProperties
     }) => {
-      if (isUrlAbsolute(src as string)) {
-        return (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img alt={alt} src={src} title={title} width={width} height={height} style={style} />
-        )
-      }
       return (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           alt={alt}
-          src={`/api?path=${parentPath}/${src}&raw=true`}
+          src={isUrlAbsolute(src as string) ? src : `/api/?path=${parentPath}/${src}&raw=true`}
           title={title}
           width={width}
           height={height}
@@ -59,51 +64,76 @@ const MarkdownPreview: FunctionComponent<{ file: any; path: string; standalone?:
         />
       )
     },
-  }
+    // code: to render code blocks with react-syntax-highlighter
+    code({
+      className,
+      children,
+      inline,
+      ...props
+    }: {
+      className?: string | undefined
+      children: ReactNode
+      inline?: boolean
+    }) {
+      if (inline) {
+        return (
+          <code className={className} {...props}>
+            {children}
+          </code>
+        )
+      }
 
-  useEffect(() => {
-    Prism.highlightAll()
-  }, [data])
+      const match = /language-(\w+)/.exec(className || '')
+      return (
+        <SyntaxHighlighter language={match ? match[1] : 'language-text'} style={tomorrowNight} PreTag="div" {...props}>
+          {String(children).replace(/\n$/, '')}
+        </SyntaxHighlighter>
+      )
+    },
+  }
 
   if (error) {
     return (
-      <div className={`${standalone ? 'shadow bg-white dark:bg-gray-900 rounded p-3' : ''}`}>
-        <FourOhFour errorMsg={error.message} />
-      </div>
+      <PreviewContainer>
+        <FourOhFour errorMsg={error} />
+      </PreviewContainer>
     )
   }
-  if (!data) {
+  if (validating) {
     return (
-      <div className={standalone ? 'shadow bg-white dark:bg-gray-900 rounded p-3' : ''}>
-        <Loading loadingText="Loading file content..." />
-      </div>
+      <>
+        <PreviewContainer>
+          <Loading loadingText={t('Loading file content...')} />
+        </PreviewContainer>
+        {standalone && (
+          <DownloadBtnContainer>
+            <DownloadButtonGroup />
+          </DownloadBtnContainer>
+        )}
+      </>
     )
   }
 
   return (
-    <>
-      <div
-        className={
-          standalone
-            ? 'markdown-body shadow bg-white dark:bg-gray-900 rounded p-3 dark:text-white'
-            : 'markdown-body p-3 dark:text-white'
-        }
-      >
-        {/* Using rehypeRaw to render HTML inside Markdown is potentially dangerous, use under safe environments. (#18) */}
-        <ReactMarkdown
-          remarkPlugins={[gfm, remarkMath]}
-          rehypePlugins={[rehypeKatex, rehypeRaw as any]}
-          components={relativeImagePathRenderer}
-        >
-          {data}
-        </ReactMarkdown>
-      </div>
-      {standalone && (
-        <div className="mt-4">
-          <DownloadBtn downloadUrl={file['@microsoft.graph.downloadUrl']} />
+    <div>
+      <PreviewContainer>
+        <div className="markdown-body">
+          {/* Using rehypeRaw to render HTML inside Markdown is potentially dangerous, use under safe environments. (#18) */}
+          <ReactMarkdown
+            remarkPlugins={[gfm, remarkMath]}
+            rehypePlugins={[rehypeKatex, rehypeRaw]}
+            components={customRenderer}
+          >
+            {content}
+          </ReactMarkdown>
         </div>
+      </PreviewContainer>
+      {standalone && (
+        <DownloadBtnContainer>
+          <DownloadButtonGroup />
+        </DownloadBtnContainer>
       )}
-    </>
+    </div>
   )
 }
 
