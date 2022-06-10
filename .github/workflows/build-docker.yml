@@ -33,5 +33,6 @@ jobs:
           echo "docker buildx version: $(docker buildx version)"
           docker buildx build \
               --platform linux/amd64 \
-              --tag ghcr.io/$GITHUB_ACTOR/onedrive-vercel-index-dockerized \
+              --tag ghcr.io/$GITHUB_ACTOR/onedrive-vercel-index-dockerized:$(date +"%Y%m%d%H%M%S") \
+              --tag ghcr.io/$GITHUB_ACTOR/onedrive-vercel-index-dockerized:latest \
               --push .
